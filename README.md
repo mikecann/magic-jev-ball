@@ -28,6 +28,10 @@ Deploy:
 npx convex deploy -y && npx @convex-dev/static-hosting deploy --skip-convex
 ```
 
+## Credits
+
+Built by Mike Cann with a lot of help from Claude Code.
+
 ## License
 
 MIT
