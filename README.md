@@ -27,3 +27,7 @@ Deploy:
 ```bash
 npx convex deploy -y && npx @convex-dev/static-hosting deploy --skip-convex
 ```
+
+## License
+
+MIT
