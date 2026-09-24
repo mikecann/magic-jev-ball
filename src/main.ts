@@ -16,14 +16,17 @@ await document.fonts.load("800 40px Inter");
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-stage.prepend(renderer.domElement);
+// The canvas covers the whole viewport so the ball can be dragged anywhere without clipping.
+// It ignores pointer events itself; we listen on window and hit-test the ball.
+renderer.domElement.className = "gl";
+document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 // Swing the reflected studio lights up and to the left, so the hotspot isn't dead centre on the 8.
 scene.environmentRotation.set(-0.45, 0.55, 0);
 const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
-camera.position.set(0, 0, 7);
+camera.position.set(0, 0, 20); // far away + narrow FOV, so the ball stays round near the edges
 
 const key = new THREE.DirectionalLight(0xffffff, 2.2);
 key.position.set(-3, 4, 5);
@@ -127,14 +130,33 @@ function wrap(g, text, max) {
 }
 drawWindow(0);
 
+// Where the ball rests: the centre of the #stage placeholder, projected onto the z=0 plane.
+const home = new THREE.Vector3();
+let halfW = 3, halfH = 2, radiusPx = 143;
 function resize() {
-  const w = stage.clientWidth, h = stage.clientHeight;
+  const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  camera.position.z = w < 520 ? 8.5 : 7;
+  // Pick the FOV so the ball is a fixed pixel size (~143px radius, smaller on phones).
+  radiusPx = w < 520 ? 105 : 143;
+  camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan((R * h) / (2 * camera.position.z * radiusPx)));
   camera.updateProjectionMatrix();
+  camera.updateMatrixWorld();
+  halfH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.position.z;
+  halfW = halfH * camera.aspect;
+  placeHome();
 }
-addEventListener("resize", resize); resize();
+function placeHome() {
+  const r = stage.getBoundingClientRect();
+  home.set(((r.left + r.width / 2) / innerWidth) * 2 - 1, -((r.top + r.height / 2) / innerHeight) * 2 + 1, 0.5)
+    .unproject(camera);
+  const dir = home.sub(camera.position).normalize();
+  home.copy(camera.position).addScaledVector(dir, -camera.position.z / dir.z);
+  shadow.position.y = home.y - R - 0.35;
+}
+addEventListener("resize", resize);
+addEventListener("scroll", placeHome, { passive: true });
+resize();
 
 // ---------- Doodle hint: once per browser, after typing pauses ----------
 const HINT_KEY = "magic-jev-ball:shaken";
@@ -169,11 +191,12 @@ function pointerTo(e) {
   raycaster.setFromCamera(ndc, camera);
 }
 const overBall = () => { ball.updateMatrixWorld(); return raycaster.intersectObject(ball, true).length > 0; };
+pos.copy(home);
 
-renderer.domElement.addEventListener("pointerdown", (e) => {
+addEventListener("pointerdown", (e) => {
   pointerTo(e);
   if (!overBall() || busy) return;
-  renderer.domElement.setPointerCapture(e.pointerId);
+  e.preventDefault(); // no text selection or focus change while grabbing
   raycaster.ray.intersectPlane(plane, hitPoint);
   grabOffset.copy(pos).sub(hitPoint);
   target.copy(pos); lastPos.copy(pos); lastMove = null;
@@ -183,22 +206,22 @@ renderer.domElement.addEventListener("pointerdown", (e) => {
   meter.classList.add("on");
   setMsg("Shake it!");
 });
-renderer.domElement.addEventListener("pointermove", (e) => {
+addEventListener("pointermove", (e) => {
   pointerTo(e);
-  if (!held) { renderer.domElement.style.cursor = overBall() && !busy ? "grab" : "default"; return; }
-  renderer.domElement.style.cursor = "grabbing";
+  if (!held) { document.body.style.cursor = overBall() && !busy ? "grab" : ""; return; }
+  document.body.style.cursor = "grabbing";
   if (raycaster.ray.intersectPlane(plane, hitPoint)) {
     target.copy(hitPoint).add(grabOffset);
     chargeShake(e);
-    target.x = THREE.MathUtils.clamp(target.x, -2.2, 2.2);
-    target.y = THREE.MathUtils.clamp(target.y, -0.9, 0.9);
+    target.x = THREE.MathUtils.clamp(target.x, -halfW + R * 1.1, halfW - R * 1.1);
+    target.y = THREE.MathUtils.clamp(target.y, -halfH + R * 1.1, halfH - R * 1.1);
   }
 });
 // Direction changes (acceleration) charge the shake, not just dragging it around.
 // Measured from pointer events in screen space so frame rate and screen size don't matter.
 let lastMove = null;
 function chargeShake(e) {
-  const h = renderer.domElement.clientHeight || 1;
+  const h = radiusPx * 3.2; // normalise by ball size, so the shake needed is the same on every screen
   const now = e.timeStamp;
   if (lastMove) {
     const dt = Math.max(0.004, (now - lastMove.t) / 1000);
@@ -214,7 +237,7 @@ const release = () => {
   lastMove = null;
   if (!held) return;
   held = false; meter.classList.remove("on");
-  renderer.domElement.style.cursor = "default";
+  document.body.style.cursor = "";
   if (energy < SHAKE_NEEDED) { faceTarget = FRONT; setMsg("Shake it harder than that", "warn"); return; }
   const question = q.value.trim();
   if (!question) { faceTarget = FRONT; setMsg("Ask it a question first", "warn"); q.focus(); return; }
@@ -222,8 +245,8 @@ const release = () => {
   faceTarget = BACK; // turn the ball over, like the real thing
   ask(question);
 };
-renderer.domElement.addEventListener("pointerup", release);
-renderer.domElement.addEventListener("pointercancel", release);
+addEventListener("pointerup", release);
+addEventListener("pointercancel", release);
 
 function setMsg(text, kind = "") { msg.textContent = text; msg.className = "msg " + kind; }
 
@@ -256,7 +279,7 @@ renderer.setAnimationLoop(() => {
     spin.multiplyScalar(Math.exp(-dt * 3));
     if (reveal > 0) { reveal = Math.max(0, reveal - dt * 3); drawWindow(reveal); } // answer sinks
   } else {
-    rest.set(0, Math.sin(t * 1.3) * 0.08, 0);
+    rest.copy(home).y += Math.sin(t * 1.3) * 0.08;
     vel.addScaledVector(rest.sub(pos), dt * 90).multiplyScalar(Math.exp(-dt * 9));
     pos.addScaledVector(vel, dt);
     spin.multiplyScalar(Math.exp(-dt * 6));
@@ -275,9 +298,10 @@ renderer.setAnimationLoop(() => {
   }
   if (!held && reveal < revealTarget) { reveal = Math.min(revealTarget, reveal + dt * 0.8); drawWindow(reveal); }
 
-  shadow.scale.setScalar(1 - (pos.y + 0.1) * 0.25);
+  const lift = pos.y - home.y;
+  shadow.scale.setScalar(THREE.MathUtils.clamp(1 - (lift + 0.1) * 0.25, 0.3, 1.2));
   shadow.position.x = pos.x;
-  shadow.material.opacity = 0.9 - pos.y * 0.3;
+  shadow.material.opacity = THREE.MathUtils.clamp(0.9 - lift * 0.3, 0, 0.9);
   renderer.render(scene, camera);
 });
 
