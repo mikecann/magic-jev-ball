@@ -1,0 +1,22 @@
+{
+  "name": "magic-jev-ball",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "deploy": "npx @convex-dev/static-hosting deploy"
+  },
+  "dependencies": {
+    "@convex-dev/ai-sdk-provider": "^0.2.1",
+    "@convex-dev/static-hosting": "^0.2.1",
+    "ai": "^7.0.113",
+    "convex": "^1.46.0",
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  }
+}
