@@ -144,7 +144,7 @@ q.addEventListener("input", () => {
   clearTimeout(hintTimer);
   doodle.classList.remove("on");
   if (hintDone() || !q.value.trim()) return;
-  hintTimer = setTimeout(() => doodle.classList.add("on"), 800);
+  hintTimer = setTimeout(() => { if (!held && !busy) doodle.classList.add("on"); }, 800);
 });
 function retireHint() {
   clearTimeout(hintTimer);
@@ -179,6 +179,7 @@ renderer.domElement.addEventListener("pointerdown", (e) => {
   target.copy(pos); lastPos.copy(pos); lastMove = null;
   held = true; energy = 0; revealTarget = 0; faceTarget = null;
   doodle.classList.remove("on");
+  panel.classList.remove("on");
   meter.classList.add("on");
   setMsg("Shake it!");
 });
@@ -237,6 +238,7 @@ async function ask(question) {
     answerText = data.answer;
     renderPanel(data);
   }
+  panel.classList.add("on");
   pending = null; busy = false;
   setMsg("Hold and shake to ask again");
 }

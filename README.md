@@ -1,5 +1,7 @@
 # Magic Jev Ball
 
+[![Magic Jev Ball](docs/screenshot.png)](https://magic-jev.mikecann.app)
+
 A Magic 8 Ball that doesn't pick at random. Hold the ball, shake it, let go, and [Jev](https://docs.typesafe.ai/introduction), TypeSafe's decision model, picks which of the 20 classic answers fits your question. It also returns a probability for every answer, which the page shows under the ball.
 
 Live at [magic-jev.mikecann.app](https://magic-jev.mikecann.app).
