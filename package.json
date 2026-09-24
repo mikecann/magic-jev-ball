@@ -8,9 +8,7 @@
     "deploy": "npx @convex-dev/static-hosting deploy"
   },
   "dependencies": {
-    "@convex-dev/ai-sdk-provider": "^0.2.1",
     "@convex-dev/static-hosting": "^0.2.1",
-    "ai": "^7.0.113",
     "convex": "^1.46.0",
     "three": "^0.186.0"
   },
