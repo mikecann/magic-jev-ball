@@ -9,6 +9,7 @@
  */
 
 import type * as jev from "../jev.js";
+import type * as abuse from "../abuse.js";
 
 import type {
   ApiFromModules,
@@ -17,6 +18,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  abuse: typeof abuse;
   jev: typeof jev;
 }>;
 
