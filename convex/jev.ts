@@ -29,58 +29,110 @@ const ANSWERS = {
 
 export const ask = action({
   args: { question: v.string() },
+  returns: v.object({
+    choice: v.string(),
+    answer: v.string(),
+    probabilities: v.record(v.string(), v.number()),
+    confidence: v.union(v.number(), v.null()),
+    model: v.string(),
+    ms: v.number(),
+    labels: v.record(v.string(), v.string()),
+  }),
   handler: async (ctx, { question }) => {
-    const trimmed = question.trim().slice(0, 500);
+    const trimmed = question.trim();
+    if (question.length > 500)
+      throw new Error("Questions must be 500 characters or fewer");
     if (!trimmed) throw new Error("Ask a question first");
+    await ctx.runMutation(internal.abuse.reserveQuestion, {});
     const started = Date.now();
-    // Raw call to the gateway's Decisions endpoint. The AI SDK's evaluate() rejects
-    // replies where Jev's rounded probabilities don't put its own choice on top,
-    // so we read the probabilities ourselves and show the most likely answer.
-    const res = await fetch("https://ai-gateway.convex.dev/alpha/decisions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${await getServiceToken("ai-gateway")}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "typesafe/jev-1.13",
-        state: { question: trimmed },
-        questions: {
-          decision: {
-            type: "choice",
-            instructions:
-              "You are an opinionated Magic 8 Ball. Always take a side: make your best judgment and pick a yes answer or a no answer, choosing a stronger one the more sure you are. Only pick a non-committal answer if the question is nonsense or not a question.",
-            criteria: ANSWERS,
-          },
+    try {
+      // Raw call to the gateway's Decisions endpoint. The AI SDK's evaluate() rejects
+      // replies where Jev's rounded probabilities don't put its own choice on top,
+      // so we read the probabilities ourselves and show the most likely answer.
+      const res = await fetch("https://ai-gateway.convex.dev/alpha/decisions", {
+        method: "POST",
+        signal: AbortSignal.timeout(20_000),
+        headers: {
+          Authorization: `Bearer ${await getServiceToken("ai-gateway")}`,
+          "Content-Type": "application/json",
         },
-      }),
-    });
-    const body = await res.json();
-    if (!res.ok) {
-      const error = `Jev request failed (${res.status}): ${JSON.stringify(body)}`;
-      await ctx.runMutation(internal.jev.record, { question: trimmed, ms: Date.now() - started, error });
+        body: JSON.stringify({
+          model: "typesafe/jev-1.13",
+          state: { question: trimmed },
+          questions: {
+            decision: {
+              type: "choice",
+              instructions:
+                "You are an opinionated Magic 8 Ball. Always take a side: make your best judgment and pick a yes answer or a no answer, choosing a stronger one the more sure you are. Only pick a non-committal answer if the question is nonsense or not a question.",
+              criteria: ANSWERS,
+            },
+          },
+        }),
+      });
+      if (!res.ok) {
+        await res.body?.cancel();
+        throw new Error("Jev is unavailable. Please try again later.");
+      }
+      const body = await readGatewayResponse(res);
+      const decision = body?.answers?.decision;
+      if (
+        !decision ||
+        typeof decision.choice !== "string" ||
+        !Object.hasOwn(ANSWERS, decision.choice)
+      ) {
+        throw new Error("Jev returned an invalid response.");
+      }
+      const probabilities: Record<string, number> = {};
+      for (const key of Object.keys(ANSWERS)) {
+        const value = decision.probabilities?.[key];
+        if (
+          typeof value === "number" &&
+          Number.isFinite(value) &&
+          value >= 0 &&
+          value <= 1
+        ) {
+          probabilities[key] = value;
+        }
+      }
+      if (!Object.keys(probabilities).length)
+        probabilities[decision.choice] = 1;
+      const choice = Object.keys(probabilities).reduce(
+        (best, key) =>
+          probabilities[key] > (probabilities[best] ?? -1) ? key : best,
+        decision.choice,
+      ) as keyof typeof ANSWERS;
+      const result = {
+        choice,
+        answer: ANSWERS[choice],
+        probabilities,
+        confidence:
+          typeof decision.confidence === "number" &&
+          Number.isFinite(decision.confidence) &&
+          decision.confidence >= 0 &&
+          decision.confidence <= 1
+            ? decision.confidence
+            : null,
+        model:
+          typeof body.model === "string"
+            ? body.model.slice(0, 120)
+            : "typesafe/jev-1.13",
+        ms: Date.now() - started,
+      };
+      await ctx.runMutation(internal.jev.record, {
+        question: trimmed,
+        ...result,
+      });
+      return { ...result, labels: ANSWERS as Record<string, string> };
+    } catch {
+      // Provider bodies can contain request details; keep errors out of client responses/logs.
+      const error = "Jev is unavailable. Please try again later.";
+      await ctx.runMutation(internal.jev.record, {
+        question: trimmed,
+        ms: Date.now() - started,
+        error,
+      });
       throw new Error(error);
     }
-    const decision = body.answers.decision as {
-      choice: keyof typeof ANSWERS;
-      confidence?: number;
-      probabilities?: Record<string, number>;
-    };
-    const probabilities = decision.probabilities ?? { [decision.choice]: 1 };
-    const choice = Object.entries(probabilities).reduce(
-      (best, [key, p]) => (p > (probabilities[best] ?? -1) ? key : best),
-      decision.choice as string,
-    ) as keyof typeof ANSWERS;
-    const result = {
-      choice,
-      answer: ANSWERS[choice],
-      probabilities,
-      confidence: decision.confidence ?? null,
-      model: body.model as string,
-      ms: Date.now() - started,
-    };
-    await ctx.runMutation(internal.jev.record, { question: trimmed, ...result });
-    return { ...result, labels: ANSWERS as Record<string, string> };
   },
 });
 
@@ -95,7 +147,34 @@ export const record = internalMutation({
     ms: v.number(),
     error: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, row) => {
     await ctx.db.insert("questions", row);
+    return null;
   },
 });
+
+async function readGatewayResponse(response: Response) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Empty gateway response");
+  let length = 0;
+  const chunks: Uint8Array[] = [];
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > 64 * 1024) throw new Error("Gateway response too large");
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel();
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
