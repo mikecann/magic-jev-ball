@@ -1,0 +1,12 @@
+{
+  "convex/abuse.ts": {
+    "@convex-dev/explicit-table-ids": {
+      "count": 1
+    }
+  },
+  "src/main.ts": {
+    "@typescript-eslint/ban-ts-comment": {
+      "count": 1
+    }
+  }
+}
